@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks.Sources;
 using Autofac;
 using Autofac.Core;
 using Autofac.Core.Activators.Reflection;
@@ -133,6 +134,38 @@ namespace AutofacSerilogIntegration.Tests
             VerifyLoggerCreation<DependencyWithoutLogger>(Times.Never);
         }
 
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void ReflectionActivator_DependencyWithoutLogger_WhenNestedScopes_ShouldNotCreateLogger(bool onlyKnownConsumers)
+        {
+            var containerBuilder = new ContainerBuilder();
+
+            containerBuilder.RegisterLogger(_logger.Object, onlyKnownConsumers: onlyKnownConsumers);
+
+            containerBuilder.RegisterType<DependencyWithoutLogger>();
+            containerBuilder.RegisterType<Component<DependencyWithoutLogger>>();
+
+            using (var container = containerBuilder.Build())
+            {
+                container.Resolve<Component<DependencyWithoutLogger>>();
+                //we know this to work from another test, just a sanity check
+                VerifyLoggerCreation<DependencyWithoutLogger>(Times.Never);
+
+                using (var scope1 = container.BeginLifetimeScope(builder => builder.RegisterType<Scoped1>()))
+                using (var scope2 = scope1.BeginLifetimeScope())
+                using (var scope3 = scope2.BeginLifetimeScope(builder => builder.RegisterType<Scoped2>()))
+                {
+                    //this is to make things worse
+                    for (var i = 0; i < 5; i++) scope3.Resolve<Component<DependencyWithoutLogger>>();
+
+                    VerifyLoggerCreation<DependencyWithoutLogger>(Times.Never);
+                }
+            }
+
+            
+        }
+
         private class Strategy : IRegistrationProcessor
         {
             public Type Process(IComponentRegistration registration, out bool injectParameter, out PropertyInfo[] targetProperties)
@@ -166,5 +199,8 @@ namespace AutofacSerilogIntegration.Tests
         }
 
         private class DependencyWithoutLogger {}
+
+        private class Scoped1 { }
+        private class Scoped2 { }
     }
 }
